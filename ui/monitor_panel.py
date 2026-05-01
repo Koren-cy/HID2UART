@@ -1,7 +1,7 @@
 """帧监视面板模块。
 
 以十六进制 + 可读描述的形式实时显示已发送的协议帧，
-自动维护最近 MAX_LINES 行记录，超出后逐行淘汰旧数据。
+自动维护最近 MAX_LINES 行记录，超出后由 Qt 原生自动截断（O(1) 复杂度）。
 """
 
 from __future__ import annotations
@@ -29,8 +29,6 @@ MAX_LINES: int = 500
 class MonitorPanel(QWidget):
     """实时帧监视面板，显示十六进制数据和可读描述。"""
 
-    MAX_LINES: int = 500
-
     def __init__(self) -> None:
         super().__init__()
         self._count: int = 0
@@ -47,15 +45,6 @@ class MonitorPanel(QWidget):
         self._hex_view.appendPlainText(line)
         self._count += 1
         self._stat_label.setText(f"已发送: {self._count}")
-
-        # 超出最大行数时删除最旧一行
-        doc = self._hex_view.document()
-        if doc.blockCount() > self.MAX_LINES:
-            cursor = self._hex_view.textCursor()
-            cursor.movePosition(cursor.Start)
-            cursor.select(cursor.LineUnderCursor)
-            cursor.removeSelectedText()
-            cursor.deleteChar()
 
     def reset(self) -> None:
         """清空所有显示内容并重置计数器。"""
@@ -74,7 +63,11 @@ class MonitorPanel(QWidget):
         self._hex_view: QPlainTextEdit = QPlainTextEdit()
         self._hex_view.setFont(font)
         self._hex_view.setReadOnly(True)
+        self._hex_view.setMaximumBlockCount(MAX_LINES)
         vlay.addWidget(self._hex_view)
+
+        # 超出最大行数时删除最旧一行（O(1) 复杂度，由 Qt 原生处理）
+        # 移除原有逐行检查逻辑
 
         bar: QHBoxLayout = QHBoxLayout()
         self._stat_label: QLabel = QLabel("已发送: 0")

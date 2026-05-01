@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import logging
 import os
 import sys
 
@@ -18,14 +19,21 @@ from utils.logging_config import setup_logging
 def main() -> None:
     """应用程序主入口。"""
     setup_logging()
+    logger = logging.getLogger(__name__)
 
-    app: QApplication = QApplication(sys.argv)
-    app.setStyle("Fusion")
+    try:
+        app: QApplication = QApplication(sys.argv)
+        app.setStyle("Fusion")
 
-    w: MainWindow = MainWindow()
-    w.show()
+        w: MainWindow = MainWindow()
+        w.show()
 
-    sys.exit(app.exec())
+        sys.exit(app.exec())
+    except KeyboardInterrupt:
+        logger.info("用户中断退出")
+    except Exception:
+        logger.critical("应用程序异常退出", exc_info=True)
+        sys.exit(1)
 
 
 if __name__ == "__main__":

@@ -1,7 +1,7 @@
 """串口通信面板模块。
 
 提供串口选择、参数配置、连接/断开及数据发送功能。
-每隔 3 秒自动刷新可用 COM 端口列表（热插拔支持）。
+每隔 3 秒自动刷新可用 COM 端口列表。
 """
 
 from __future__ import annotations
@@ -11,7 +11,7 @@ import typing
 
 import serial
 import serial.tools.list_ports
-from PyQt5.QtCore import QTimer, Qt
+from PyQt5.QtCore import Qt, QTimer
 from PyQt5.QtWidgets import (
     QComboBox,
     QGridLayout,
@@ -40,6 +40,9 @@ BAUD_RATES: list[int] = [
 
 # 刷新间隔（毫秒）
 _REFRESH_INTERVAL_MS: int = 3000
+
+# 串口超时时间（秒）
+SERIAL_TIMEOUT: float = 0.0
 
 
 class SerialPanel(QWidget):
@@ -189,7 +192,7 @@ class SerialPanel(QWidget):
                 bytesize=databits_map[self._databits_combo.currentText()],
                 stopbits=stopbits_map[self._stopbits_combo.currentText()],
                 parity=parity_map[self._parity_combo.currentText()],
-                timeout=0,
+                timeout=SERIAL_TIMEOUT,
             )
             self._connect_btn.setText("断开")
             # 连接成功后禁用配置控件
@@ -204,8 +207,10 @@ class SerialPanel(QWidget):
             self._on_connected(port)
             logger.info("串口已连接: %s", port)
         except serial.SerialException as e:
-            self._connect_btn.setText(f"连接失败")
+            self._connect_btn.setText("连接失败")
             logger.error("串口连接失败 [%s]: %s", port, e)
+            # 2 秒后恢复按钮，允许重试
+            QTimer.singleShot(2000, lambda: self._connect_btn.setText("连接"))
 
     def _disconnect(self) -> None:
         """关闭串口连接并恢复 UI 控件状态。"""

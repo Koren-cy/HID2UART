@@ -8,13 +8,13 @@
     └────────┴───────┴───────┴───────┴───────┴────────┘
 
     [0-1]      帧头       0xFA55
-    [2]        类型       0x01=键盘 0x02=鼠标按键 0x04=鼠标移动/滚轮 0x03=手柄 0x05=手柄摇杆
+    [2]        类型       0x01=键盘 0x02=鼠标按键 0x04=鼠标移动/滚轮 0x03=手柄按钮 0x05=手柄摇杆
     [3]        载荷长度   payload 字节数
     [4..N]     载荷       类型相关的具体数据
     [N+1]      CRC-8      类型+载荷 的校验和
     [N+2..N+3] 帧尾       0x0D0A
 
-典型帧长度：键盘 9 字节，鼠标按键 9 字节，鼠标移动 16 字节，手柄 11 字节，手柄摇杆 18 字节
+典型帧长度：键盘 9 字节，鼠标按键 9 字节，鼠标移动 16 字节，手柄按键 11 字节，手柄摇杆 18 字节
 
 帧示例：键盘按下 A 键（虚拟键码 0x41）
 
@@ -42,13 +42,15 @@ __all__ = [
     "FRAME_HEADER",
     "FRAME_TAIL",
     "FrameType",
+    "ACTION_PRESS",
+    "ACTION_RELEASE",
     "VK_NAMES",
     "MOUSE_BUTTON_NAMES",
     "GP_BUTTON_NAMES",
     "build_keyboard_frame",
     "build_mouse_button_frame",
     "build_mouse_move_frame",
-    "build_gamepad_frame",
+    "build_gamepad_button_frame",
     "build_gamepad_stick_frame",
     "describe_frame",
 ]
@@ -64,8 +66,13 @@ class FrameType(IntEnum):
     KEYBOARD = 0x01         # 键盘按键事件
     MOUSE_BUTTON = 0x02     # 鼠标按键事件
     MOUSE_MOVE = 0x04       # 鼠标移动/滚轮事件
-    GAMEPAD = 0x03          # 手柄按钮事件
+    GAMEPAD_BUTTON = 0x03  # 手柄按钮事件
     GAMEPAD_STICK = 0x05    # 手柄摇杆/扳机事件
+
+
+# 动作值常量
+ACTION_PRESS: int = 0x01   # 按下
+ACTION_RELEASE: int = 0x00  # 释放
 
 
 # Windows 虚拟键码 -> 可读名称映射表
@@ -217,7 +224,7 @@ def build_keyboard_frame(vk: int, pressed: bool) -> bytes:
     返回：
         完整的二进制帧字节串
     """
-    action: int = 0x01 if pressed else 0x00
+    action: int = ACTION_PRESS if pressed else ACTION_RELEASE
     payload: bytes = struct.pack("<BB", vk, action)
     return _build_frame(FrameType.KEYBOARD, payload)
 
@@ -237,7 +244,7 @@ def build_mouse_button_frame(button: int, pressed: bool) -> bytes:
     返回：
         完整的二进制帧字节串
     """
-    action: int = 0x01 if pressed else 0x00
+    action: int = ACTION_PRESS if pressed else ACTION_RELEASE
     payload: bytes = struct.pack("<BB", button & 0xFF, action)
     return _build_frame(FrameType.MOUSE_BUTTON, payload)
 
@@ -276,16 +283,16 @@ def build_mouse_move_frame(dx: int, dy: int, scroll: int) -> bytes:
     return _build_frame(FrameType.MOUSE_MOVE, payload)
 
 
-def build_gamepad_frame(
+def build_gamepad_button_frame(
     gamepad_id: int, button: int, pressed: bool
 ) -> bytes:
     """
-    构造游戏手柄按钮事件帧。
+    构造手柄按钮事件帧。
 
     载荷格式（4 字节）：
       [0]     手柄索引
-      [1-2]   按键位掩码（小端序 uint16）
-      [3]     动作 0x01=按下 0x00=释放
+      [1]     动作 0x01=按下 0x00=释放
+      [2-3]   按键位掩码（小端序 uint16）
 
     参数：
         gamepad_id: 手柄索引
@@ -295,11 +302,11 @@ def build_gamepad_frame(
     返回：
         完整的二进制帧字节串
     """
-    action: int = 0x01 if pressed else 0x00
+    action: int = ACTION_PRESS if pressed else ACTION_RELEASE
     payload: bytes = struct.pack(
         "<BBH", gamepad_id & 0xFF, action, button & 0xFFFF
     )
-    return _build_frame(FrameType.GAMEPAD, payload)
+    return _build_frame(FrameType.GAMEPAD_BUTTON, payload)
 
 
 def build_gamepad_stick_frame(
@@ -324,7 +331,7 @@ def build_gamepad_stick_frame(
       [10]  右扳机（0 ~ 255）
 
     参数：
-        gamepad_id: 手柄索
+        gamepad_id: 手柄索引
         lx: 左摇杆 X 轴（-32767 ~ +32767）
         ly: 左摇杆 Y 轴（-32767 ~ +32767）
         rx: 右摇杆 X 轴（-32767 ~ +32767）
@@ -379,7 +386,7 @@ def describe_frame(frame: bytes) -> str:
             if (button & (1 << bit)) and bit in MOUSE_BUTTON_NAMES
         ]
         btn_str: str = ",".join(btn_names) if btn_names else f"?(0x{button:02X})"
-        state = "pressed" if action == 0x01 else "released"
+        state = "pressed" if action == ACTION_PRESS else "released"
         return f"MOUSE BTN [{btn_str}] {state}"
     elif frame_type == FrameType.MOUSE_MOVE:
         (
@@ -401,7 +408,7 @@ def describe_frame(frame: bytes) -> str:
         if scroll != 0:
             parts.append(f"scroll={scroll:+d}")
         return "MOUSE " + " ".join(parts) if parts else "MOUSE"
-    elif frame_type == FrameType.GAMEPAD:
+    elif frame_type == FrameType.GAMEPAD_BUTTON:
         gp_id, action, button = struct.unpack("<BBH", payload[:4])
         btn_names = [
             GP_BUTTON_NAMES[bit]
@@ -409,7 +416,7 @@ def describe_frame(frame: bytes) -> str:
             if (button & (1 << bit)) and bit in GP_BUTTON_NAMES
         ]
         btn_str = ",".join(btn_names) if btn_names else f"?(0x{button:04X})"
-        state = "pressed" if action == 0x01 else "released"
+        state = "pressed" if action == ACTION_PRESS else "released"
         return f"GP{gp_id} BTN [{btn_str}] {state}"
     elif frame_type == FrameType.GAMEPAD_STICK:
         gp_id, lx, ly, rx, ry, lt, rt = struct.unpack("<BhhhhBB", payload)

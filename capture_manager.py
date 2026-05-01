@@ -6,14 +6,15 @@
 from __future__ import annotations
 
 import logging
+from collections.abc import Callable
 from typing import TYPE_CHECKING
 
 from core import CaptureBackend, FrameCallback
 
 if TYPE_CHECKING:
+    from input.gamepad_capture import GamepadCapture
     from input.keyboard_capture import KeyboardCapture
     from input.mouse_capture import MouseCapture
-    from input.gamepad_capture import GamepadCapture
 
 __all__ = ["CaptureManager"]
 
@@ -45,26 +46,43 @@ class CaptureManager:
         参数：
             types: 要启动的捕获器类型集合，包含 "kb"、"mouse"、"gamepad"
         """
-        if "kb" in types:
-            from input.keyboard_capture import KeyboardCapture
+        self._start_if_requested(types, "kb", "键盘", self._init_keyboard)
+        self._start_if_requested(types, "mouse", "鼠标", self._init_mouse)
+        self._start_if_requested(types, "gamepad", "手柄", self._init_gamepad)
 
-            self._kb = KeyboardCapture(self._on_frame)
-            self._kb.start()
-            logger.info("键盘捕获已启动")
+    def _start_if_requested(
+        self,
+        types: set[str],
+        key: str,
+        name: str,
+        init_fn: Callable[[], CaptureBackend],
+    ) -> None:
+        """如果请求的类型包含 key，则调用 init_fn 初始化并启动捕获器。"""
+        if key in types:
+            instance: CaptureBackend = init_fn()
+            instance.start()
+            logger.info(f"{name}捕获已启动")
 
-        if "mouse" in types:
-            from input.mouse_capture import MouseCapture
+    def _init_keyboard(self) -> KeyboardCapture:
+        """初始化键盘捕获器。"""
+        from input.keyboard_capture import KeyboardCapture
 
-            self._mouse = MouseCapture(self._on_frame)
-            self._mouse.start()
-            logger.info("鼠标捕获已启动")
+        self._kb = KeyboardCapture(self._on_frame)
+        return self._kb
 
-        if "gamepad" in types:
-            from input.gamepad_capture import GamepadCapture
+    def _init_mouse(self) -> MouseCapture:
+        """初始化鼠标捕获器。"""
+        from input.mouse_capture import MouseCapture
 
-            self._gamepad = GamepadCapture(self._on_frame)
-            self._gamepad.start()
-            logger.info("手柄捕获已启动")
+        self._mouse = MouseCapture(self._on_frame)
+        return self._mouse
+
+    def _init_gamepad(self) -> GamepadCapture:
+        """初始化手柄捕获器。"""
+        from input.gamepad_capture import GamepadCapture
+
+        self._gamepad = GamepadCapture(self._on_frame)
+        return self._gamepad
 
     def stop(self) -> None:
         """停止所有正在运行的输入捕获器。"""

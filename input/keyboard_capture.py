@@ -2,19 +2,15 @@
 
 使用 pynput 库监听系统键盘事件，
 并通过回调将键盘事件封装为协议帧。
-
-注意：pynput 键盘监听器在后台线程运行，回调由该线程触发，
-因此涉及 UI 操作时需注意线程安全（已通过主窗口的 Qt 信号解决）。
 """
 
 from __future__ import annotations
 
 import logging
-from typing import Optional
 
-from core import FrameCallback
 from pynput import keyboard
 
+from core import FrameCallback
 from protocol import build_keyboard_frame
 
 __all__ = ["KeyboardCapture"]
@@ -90,7 +86,7 @@ class KeyboardCapture:
             on_frame: 帧就绪时的回调，签名为 (frame: bytes) -> None
         """
         self._on_frame: FrameCallback = on_frame
-        self._listener: Optional[keyboard.Listener] = None
+        self._listener: keyboard.Listener | None = None
 
     def start(self) -> None:
         """启动键盘监听。"""
@@ -111,20 +107,26 @@ class KeyboardCapture:
 
     def _on_press(self, key: keyboard.Key | keyboard.KeyCode) -> None:
         """按键按下事件回调。"""
-        vk: Optional[int] = self._vk_from_key(key)
-        if vk is not None:
-            frame: bytes = build_keyboard_frame(vk, pressed=True)
-            self._on_frame(frame)
+        try:
+            vk: int | None = self._vk_from_key(key)
+            if vk is not None:
+                frame: bytes = build_keyboard_frame(vk, pressed=True)
+                self._on_frame(frame)
+        except Exception:
+            logger.exception("键盘事件处理失败")
 
     def _on_release(self, key: keyboard.Key | keyboard.KeyCode) -> None:
         """按键释放事件回调。"""
-        vk: Optional[int] = self._vk_from_key(key)
-        if vk is not None:
-            frame: bytes = build_keyboard_frame(vk, pressed=False)
-            self._on_frame(frame)
+        try:
+            vk: int | None = self._vk_from_key(key)
+            if vk is not None:
+                frame: bytes = build_keyboard_frame(vk, pressed=False)
+                self._on_frame(frame)
+        except Exception:
+            logger.exception("键盘事件处理失败")
 
     @staticmethod
-    def _vk_from_key(key: keyboard.Key | keyboard.KeyCode) -> Optional[int]:
+    def _vk_from_key(key: keyboard.Key | keyboard.KeyCode) -> int | None:
         """
         从 pynput Key / KeyCode 对象中提取 Windows 虚拟键码。
 

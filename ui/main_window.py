@@ -11,9 +11,8 @@
 from __future__ import annotations
 
 import logging
-import sys
 
-from PyQt5.QtCore import Qt, pyqtSignal, QObject
+from PyQt5.QtCore import QEvent, QObject, Qt, pyqtSignal
 from PyQt5.QtWidgets import (
     QCheckBox,
     QGroupBox,
@@ -167,7 +166,7 @@ class MainWindow(QMainWindow):
         self._status_label: QLabel = QLabel("就绪")
         bar.addWidget(self._status_label)
 
-    def closeEvent(self, event) -> None:  # type: ignore[override]
+    def closeEvent(self, event: QEvent) -> None:
         """窗口关闭时确保所有捕获器停止。"""
         self.stop_capture()
         logger.info("应用程序关闭")

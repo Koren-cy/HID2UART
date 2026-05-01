@@ -2,26 +2,19 @@
 
 使用 pygame 库轮询已连接的游戏手柄状态，
 仅在状态发生实际变化时通过回调发送帧，支持热插拔。
-
-实现细节：
-- 按钮和摇杆/扳机分开独立处理，互不干扰。
-- 按钮：每次检测到按钮状态变化（按下或释放），发送一个按钮帧，载荷包含
-  当前所有按钮的位掩码和变化的那组按钮位掩码，供接收端判断哪些按钮变了。
-- 摇杆/扳机：摇杆值从 [-1,1] 映射到 [-32767,32767]，扳机从 [-1,1] 归一化到 [0,255]。
-- 只有摇杆或扳机值与上次相比有实际变化时才发送摇杆帧。
 """
 
 from __future__ import annotations
 
 import logging
-import time
 import threading
-from typing import Any, Optional
+import time
+from typing import Any
 
-from core import FrameCallback
 import pygame
 
-from protocol import build_gamepad_frame, build_gamepad_stick_frame
+from core import FrameCallback
+from protocol import build_gamepad_button_frame, build_gamepad_stick_frame
 
 __all__ = ["GamepadCapture"]
 
@@ -87,11 +80,11 @@ class GamepadCapture:
 
     内部维护每个手柄的上一帧状态，分别检测按钮和摇杆的变化，
     各自独立发送对应的协议帧：
-    - 按键变化 -> build_gamepad_frame (GAMEPAD)
+    - 按键变化 -> build_gamepad_button_frame (GAMEPAD_BUTTON)
     - 摇杆/扳机变化 -> build_gamepad_stick_frame (GAMEPAD_STICK)
     """
 
-    # 轮询间隔，约 8ms
+    # 轮询间隔（秒）
     _POLL_INTERVAL: float = 0.001
 
     def __init__(self, on_frame: FrameCallback) -> None:
@@ -101,7 +94,7 @@ class GamepadCapture:
         """
         self._on_frame: FrameCallback = on_frame
         self._running: bool = False
-        self._thread: Optional[threading.Thread] = None
+        self._thread: threading.Thread | None = None
         self._lock: threading.Lock = threading.Lock()
 
     def start(self) -> None:
@@ -130,9 +123,9 @@ class GamepadCapture:
 
     def _poll_loop(self) -> None:
         """轮询主循环：定时检测所有手柄的按钮和摇杆状态变化。"""
-        # 每个手柄的上一帧状态
-        prev_button: list[Optional[int]] = []  # 上一帧按钮位掩码
-        prev_stick: list[Optional[GamepadState]] = []  # 上一帧摇杆/扳机状态
+        # 每个手柄的上一帧状态（在后台线程内，无需额外锁保护）
+        prev_button: list[int | None] = []
+        prev_stick: list[GamepadState | None] = []
 
         def _ensure_capacity(count: int) -> None:
             """确保 prev_* 列表与当前手柄数量同步。"""
@@ -158,11 +151,14 @@ class GamepadCapture:
                     prev_stick[i] = None
                     continue
 
-                state: GamepadState = _read_gamepad_state(js)
+                try:
+                    state: GamepadState = _read_gamepad_state(js)
+                except Exception:
+                    continue
 
                 # ---- 按钮变化检测 ----
                 if state["buttons"] != prev_button[i]:
-                    prev_buttons: Optional[int] = prev_button[i]
+                    prev_buttons: int | None = prev_button[i]
                     prev_button[i] = state["buttons"]
                     self._emit_button(i, state["buttons"], prev_buttons)
 
@@ -187,7 +183,10 @@ class GamepadCapture:
                         js.init()
                     except pygame.error:
                         continue
-                    state = _read_gamepad_state(js)
+                    try:
+                        state = _read_gamepad_state(js)
+                    except Exception:
+                        continue
                     prev_buttons = prev_button[gp_id] if gp_id < len(prev_button) else None
                     self._emit_button(gp_id, state["buttons"], prev_buttons)
                     prev_button[gp_id] = state["buttons"]
@@ -195,30 +194,36 @@ class GamepadCapture:
             time.sleep(self._POLL_INTERVAL)
 
     def _emit_button(
-        self, gp_id: int, buttons: int, prev: Optional[int]
+        self, gp_id: int, buttons: int, prev: int | None
     ) -> None:
         """检测按钮变化，发送按下/释放帧。"""
-        if prev is None:
+        try:
+            if prev is None:
+                for bit in range(16):
+                    if buttons & (1 << bit):
+                        frame: bytes = build_gamepad_button_frame(gp_id, 1 << bit, True)
+                        self._on_frame(frame)
+                return
+
+            changed: int = prev ^ buttons
+            pressed: int = changed & buttons
+            released: int = changed & prev
+
             for bit in range(16):
-                if buttons & (1 << bit):
-                    frame: bytes = build_gamepad_frame(gp_id, 1 << bit, True)
+                mask: int = 1 << bit
+                if pressed & mask:
+                    frame = build_gamepad_button_frame(gp_id, mask, True)
                     self._on_frame(frame)
-            return
-
-        changed: int = prev ^ buttons
-        pressed: int = changed & buttons
-        released: int = changed & prev
-
-        for bit in range(16):
-            mask: int = 1 << bit
-            if pressed & mask:
-                frame = build_gamepad_frame(gp_id, mask, True)
-                self._on_frame(frame)
-            if released & mask:
-                frame = build_gamepad_frame(gp_id, mask, False)
-                self._on_frame(frame)
+                if released & mask:
+                    frame = build_gamepad_button_frame(gp_id, mask, False)
+                    self._on_frame(frame)
+        except Exception:
+            logger.exception("手柄按钮帧发送失败")
 
     def _emit_stick(self, gp_id: int, **kwargs: Any) -> None:
         """发送手柄摇杆/扳机帧。"""
-        frame: bytes = build_gamepad_stick_frame(gp_id, **kwargs)
-        self._on_frame(frame)
+        try:
+            frame: bytes = build_gamepad_stick_frame(gp_id, **kwargs)
+            self._on_frame(frame)
+        except Exception:
+            logger.exception("手柄摇杆帧发送失败")

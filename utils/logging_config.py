@@ -1,10 +1,4 @@
 """日志配置模块。
-
-用法：
-    from utils.logging_config import setup_logging
-    setup_logging()
-
-日志级别可通过环境变量 LOG_LEVEL 配置，默认为 INFO。
 """
 from __future__ import annotations
 
